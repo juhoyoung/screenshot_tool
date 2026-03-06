@@ -20,6 +20,7 @@ from tkinter import ttk, filedialog, messagebox
 import threading
 import json
 import os
+import sys
 import re
 import queue
 from datetime import datetime
@@ -34,7 +35,14 @@ try:
 except ImportError:
     HAS_DEPS = False
 
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+# 실행 환경(exe 또는 스크립트)에 따른 경로 설정
+if getattr(sys, 'frozen', False):
+    application_path = os.path.dirname(sys.executable)
+else:
+    application_path = os.path.dirname(os.path.abspath(__file__))
+
+CONFIG_FILE = os.path.join(application_path, "config.json")
+
 DEFAULT_CONFIG = {
     "save_path":         os.path.join(os.path.expanduser("~"), "Pictures", "Screenshots"),
     "image_format":      "PNG",
@@ -498,5 +506,9 @@ class SettingsWindow(tk.Toplevel):
         self.destroy()
 
 
-if __name__ == "__main__":
+def main():
     ScreenshotApp().run()
+
+
+if __name__ == "__main__":
+    main()
