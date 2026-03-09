@@ -1,18 +1,10 @@
 """
 Screenshot Tray Application
-- PrintScreen 키로 활성 창 캡처
+- PrintScreen 키로 활성 창 캡처 (pynput 사용하여 Numpad * 충돌 해결)
 - 시스템 트레이에서 실행 (pystray는 별도 스레드)
 - PNG/JPEG/BMP/WEBP 형식 지원
 - 저장 위치 및 형식 설정 가능
 - 활성 창 이름으로 폴더 자동 생성
-
-[수정 내역]
-- 'main thread is not in main loop' 오류 수정:
-    tkinter 메인 루프를 메인 스레드에 두고
-    pystray를 daemon 스레드로 분리.
-    설정창은 tk.Toplevel로 구현하여 루프 공유.
-- UI 레이아웃 수정: 라디오버튼 2열 그리드 배치
-- 경로 지정: 📁 폴더 선택 버튼 → filedialog.askdirectory 팝업
 """
 
 import tkinter as tk
@@ -30,7 +22,7 @@ try:
     from PIL import ImageGrab, Image, ImageDraw
     import pystray
     from pystray import MenuItem as item
-    import keyboard
+    from pynput import keyboard as pynput_keyboard
     HAS_DEPS = True
 except ImportError:
     HAS_DEPS = False
@@ -49,6 +41,16 @@ DEFAULT_CONFIG = {
     "quality":           95,
     "show_notification": True,
     "hotkey":            "print_screen",
+}
+
+# pynput 용 단축키 매핑 딕셔너리
+HOTKEY_MAP = {
+    "print_screen": "<print_screen>",
+    "ctrl+shift+s": "<ctrl>+<shift>+s",
+    "ctrl+alt+s": "<ctrl>+<alt>+s",
+    "ctrl+shift+p": "<ctrl>+<shift>+p",
+    "f12": "<f12>",
+    "ctrl+f12": "<ctrl>+<f12>"
 }
 
 
@@ -101,6 +103,7 @@ class ScreenshotApp:
         self.is_running = True
         self.last_path = ""
         self._settings_win = None
+        self.hotkey_listener = None
 
         # 메인 스레드에 tkinter 루트 생성 (숨김)
         self.root = tk.Tk()
@@ -127,7 +130,7 @@ class ScreenshotApp:
     # ── 캡처 ────────────────────────────────
 
     def take_screenshot(self):
-        """keyboard 스레드 콜백 → 메인 스레드로 위임"""
+        """pynput 스레드 콜백 → 메인 스레드로 위임"""
         self._later(self._capture)
 
     def _capture(self):
@@ -184,6 +187,20 @@ class ScreenshotApp:
     def _t_folder(self, *_):   self._later(self._open_folder)
     def _t_quit(self, *_):     self._later(self._quit)
 
+    # ── 단축키 관리 (pynput) ────────────────
+
+    def _start_hotkey(self):
+        if self.hotkey_listener:
+            self.hotkey_listener.stop()
+
+        hk_str = self.config.get("hotkey", "print_screen")
+        pynput_hk = HOTKEY_MAP.get(hk_str, "<print_screen>")
+
+        self.hotkey_listener = pynput_keyboard.GlobalHotKeys({
+            pynput_hk: self.take_screenshot
+        })
+        self.hotkey_listener.start()
+
     # ── 설정창 ──────────────────────────────
 
     def _open_settings(self):
@@ -195,14 +212,10 @@ class ScreenshotApp:
             self.root, self.config, self._apply_settings)
 
     def _apply_settings(self, new_cfg):
-        old_hk = self.config.get("hotkey", "print_screen")
         self.config = new_cfg
         save_config(new_cfg)
         if HAS_DEPS:
-            try:   keyboard.remove_hotkey(old_hk)
-            except Exception: pass
-            try:   keyboard.add_hotkey(self.config["hotkey"], self.take_screenshot)
-            except Exception: pass
+            self._start_hotkey()
 
     # ── 폴더 열기 ───────────────────────────
 
@@ -216,8 +229,8 @@ class ScreenshotApp:
 
     def _quit(self):
         self.is_running = False
-        if HAS_DEPS:
-            try: keyboard.remove_hotkey(self.config.get("hotkey"))
+        if HAS_DEPS and self.hotkey_listener:
+            try: self.hotkey_listener.stop()
             except Exception: pass
         if self.tray_icon:
             threading.Thread(target=self.tray_icon.stop, daemon=True).start()
@@ -229,7 +242,7 @@ class ScreenshotApp:
         if not HAS_DEPS:
             self._no_deps_ui(); return
 
-        keyboard.add_hotkey(self.config["hotkey"], self.take_screenshot)
+        self._start_hotkey()
 
         menu = pystray.Menu(
             item("📸  지금 캡처",       self._t_capture),
@@ -254,7 +267,7 @@ class ScreenshotApp:
         tk.Label(self.root, text="필요한 패키지를 설치해주세요",
                  font=("Segoe UI", 13, "bold"),
                  fg="#ff6b6b", bg="#1a1a2e").pack(pady=(28, 8))
-        cmd = "pip install pillow pystray pywin32 keyboard"
+        cmd = "pip install pillow pystray pywin32 pynput"
         frm = tk.Frame(self.root, bg="#0a0a15", padx=12, pady=10)
         frm.pack(padx=24, fill="x")
         tk.Label(frm, text=cmd, font=("Consolas", 10),
